@@ -61,6 +61,34 @@ function extractSlidesFromHtml(html) {
   return slides.filter(s => s.title && typeof s.description === "string");
 }
 
+function extractSlidesFromHtml_SlideShow(html) {
+  const dom = new JSDOM(html);
+  const { document } = dom.window;
+
+  const h2Elements = [...document.querySelectorAll("h2")];
+  const slides = [];
+
+  h2Elements.forEach((h2) => {
+    const title = h2.textContent.trim();
+
+    let description = "";
+    let sibling = h2.nextElementSibling;
+
+    // Collect plain text until the next <h2>
+    while (sibling && sibling.tagName !== "H2") {
+      description += sibling.textContent + "\n"; // Keep line breaks
+      sibling = sibling.nextElementSibling;
+    }
+
+    slides.push({
+      title,
+      description: description.trim()
+    });
+  });
+
+  return slides;
+}
+
 
 
 app.post("/upload-doc", async (req, res) => {
@@ -315,7 +343,7 @@ app.post("/create-styled-sheet", async (req, res) => {
 
 app.post("/create-slides", async (req, res) => {
   try {
-    const { access_token, html_base64, presentationTitle = "New Slides" } = req.body;
+    const { access_token, html_base64, file_name } = req.body;
 
     if (!access_token || !html_base64) {
       return res.status(400).json({ error: "Missing 'access_token' or 'html_base64'" });
@@ -333,6 +361,7 @@ app.post("/create-slides", async (req, res) => {
     const slidesApi = google.slides({ version: "v1", auth });
 
     // Step 1: Create presentation
+    const presentationTitle = file_name && file_name.trim() ? file_name : "My Presentation";
     const { data: { presentationId } } = await slidesApi.presentations.create({
       requestBody: { title: presentationTitle },
     });
@@ -474,6 +503,207 @@ app.post("/create-slides", async (req, res) => {
               scaleY: 1,
               translateX: 60,
               translateY: 70,
+              unit: "PT"
+            }
+          }
+        }
+      });
+      slideRequests.push({
+        insertText: {
+          objectId: `desc_${slideId}`,
+          text: slide.description,
+          insertionIndex: 0
+        }
+      });
+      slideRequests.push({
+        updateTextStyle: {
+          objectId: `desc_${slideId}`,
+          style: {
+            fontSize: { magnitude: 14, unit: "PT" },
+            bold: false
+          },
+          fields: "fontSize,bold"
+        }
+      });
+    });
+
+    // Execute all requests
+    await slidesApi.presentations.batchUpdate({
+      presentationId,
+      requestBody: { requests: slideRequests }
+    });
+
+    const url = `https://docs.google.com/presentation/d/${presentationId}/edit`;
+    res.json({ url });
+
+  } catch (err) {
+    console.error("Slides API Error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/create-slides-show", async (req, res) => {
+  try {
+    const { access_token, html_base64, file_name } = req.body;
+
+    if (!access_token || !html_base64) {
+      return res.status(400).json({ error: "Missing 'access_token' or 'html_base64'" });
+    }
+
+    const htmlContent = Buffer.from(html_base64, "base64").toString("utf8");
+    const slidesData = extractSlidesFromHtml_SlideShow(htmlContent);
+    if (!slidesData.length) {
+      return res.status(400).json({ error: "No valid slides found in HTML." });
+    }
+
+    const auth = new google.auth.OAuth2();
+    auth.setCredentials({ access_token });
+
+    const slidesApi = google.slides({ version: "v1", auth });
+
+    // Step 1: Create presentation
+    const presentationTitle = file_name && file_name.trim() ? file_name : "My Presentation";
+    const { data: { presentationId } } = await slidesApi.presentations.create({
+      requestBody: { title: presentationTitle },
+    });
+
+    // Step 2: Delete default slide
+    const defaultSlide = await slidesApi.presentations.get({ presentationId });
+    const defaultSlideId = defaultSlide.data.slides[0].objectId;
+    await slidesApi.presentations.batchUpdate({
+      presentationId,
+      requestBody: { requests: [{ deleteObject: { objectId: defaultSlideId } }] }
+    });
+
+    const BACKGROUND_IMAGE_URL = 'https://9b05dd864822d678c9fcbed18bf8311c.cdn.bubble.io/f1753546339862x395890190803218200/background.PNG?_gl=1*1bmqctz*_gcl_au*MTgxNzI2MDE2OC4xNzQ2NDU3OTc5*_ga*MjAzNTQ2NTk5LjE2NzcyMzIwNjY.*_ga_BFPVR2DEE2*czE3NTM1MzQ0NTckbzIxOSRnMSR0MTc1MzU0NjAzNiRqNjAkbDAkaDA.';
+    const LOGO_IMAGE_URL = 'https://9b05dd864822d678c9fcbed18bf8311c.cdn.bubble.io/f1753458006954x918763125344364000/46c94753-1589-47cd-8efa-cd023be6bd4a.png?_gl=1*zow64b*_gcl_au*MTgxNzI2MDE2OC4xNzQ2NDU3OTc5*_ga*MjAzNTQ2NTk5LjE2NzcyMzIwNjY.*_ga_BFPVR2DEE2*czE3NTM1MzQ0NTckbzIxOSRnMSR0MTc1MzU0NjAzNiRqNjAkbDAkaDA.';
+
+    const slideRequests = [];
+
+    slidesData.forEach((slide, index) => {
+      const slideId = `slide_${index + 1}`;
+
+      // Create slide
+      slideRequests.push({
+        createSlide: {
+          objectId: slideId,
+          slideLayoutReference: { predefinedLayout: "BLANK" }
+        }
+      });
+
+      // Set background image
+      slideRequests.push({
+        createImage: {
+          objectId: `bg_${slideId}`,
+          url: BACKGROUND_IMAGE_URL,
+          elementProperties: {
+            pageObjectId: slideId,
+            size: { height: { magnitude: 405, unit: "PT" }, width: { magnitude: 720, unit: "PT" } },
+            transform: {
+              scaleX: 1,
+              scaleY: 1,
+              translateX: 0,
+              translateY: 0,
+              unit: "PT"
+            }
+          }
+        }
+      });
+
+      // Add logo (bottom left)
+      slideRequests.push({
+        createImage: {
+          objectId: `logo_${slideId}`,
+          url: LOGO_IMAGE_URL,
+          elementProperties: {
+            pageObjectId: slideId,
+            size: { height: { magnitude: 40, unit: "PT" }, width: { magnitude: 40, unit: "PT" } },
+            transform: {
+              scaleX: 1,
+              scaleY: 1,
+              translateX: 10,
+              translateY: 340,
+              unit: "PT"
+            }
+          }
+        }
+      });
+
+      // Add footer (bottom right)
+      slideRequests.push({
+        createShape: {
+          objectId: `footer_${slideId}`,
+          shapeType: "TEXT_BOX",
+          elementProperties: {
+            pageObjectId: slideId,
+            size: { height: { magnitude: 20, unit: "PT" }, width: { magnitude: 200, unit: "PT" } },
+            transform: {
+              scaleX: 1,
+              scaleY: 1,
+              translateX: 540,
+              translateY: 370,
+              unit: "PT"
+            }
+          }
+        }
+      });
+      slideRequests.push({
+        insertText: {
+          objectId: `footer_${slideId}`,
+          text: "HelpMeTeach.AI",
+          insertionIndex: 0
+        }
+      });
+
+      // Add title (centered top)
+      slideRequests.push({
+        createShape: {
+          objectId: `title_${slideId}`,
+          shapeType: "TEXT_BOX",
+          elementProperties: {
+            pageObjectId: slideId,
+            size: { height: { magnitude: 50, unit: "PT" }, width: { magnitude: 600, unit: "PT" } },
+            transform: {
+              scaleX: 1,
+              scaleY: 1,
+              translateX: 60,
+              translateY: 50,
+              unit: "PT"
+            }
+          }
+        }
+      });
+      slideRequests.push({
+        insertText: {
+          objectId: `title_${slideId}`,
+          text: slide.title,
+          insertionIndex: 0
+        }
+      });
+      slideRequests.push({
+        updateTextStyle: {
+          objectId: `title_${slideId}`,
+          style: {
+            fontSize: { magnitude: 18, unit: "PT" },
+            bold: true
+          },
+          fields: "fontSize,bold"
+        }
+      });
+
+      // Add description (centered middle)
+      slideRequests.push({
+        createShape: {
+          objectId: `desc_${slideId}`,
+          shapeType: "TEXT_BOX",
+          elementProperties: {
+            pageObjectId: slideId,
+            size: { height: { magnitude: 80, unit: "PT" }, width: { magnitude: 600, unit: "PT" } },
+            transform: {
+              scaleX: 1,
+              scaleY: 1,
+              translateX: 60,
+              translateY: 100,
               unit: "PT"
             }
           }
