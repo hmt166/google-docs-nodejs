@@ -14,22 +14,53 @@ const app = express();
 
 app.use(cors());
 app.use(express.json({ limit: "10mb" }));
+
 function extractSlidesFromHtml(html) {
   const dom = new JSDOM(html);
   const { document } = dom.window;
-  const paragraphs = [...document.querySelectorAll("p")];
 
   const slides = [];
-  for (let i = 0; i < paragraphs.length; i += 2) {
-    const titleText = paragraphs[i]?.textContent?.replace(/^Title:\s*/i, "").trim();
-    const descText = paragraphs[i + 1]?.textContent?.replace(/^Content:\s*/i, "").trim();
-    if (titleText && descText) {
-      slides.push({ title: titleText, description: descText });
+  let lastSlide = null;
+  let buffer = [];
+
+  // A title is a <p> where the whole text is exactly the <strong> text
+  const isStrongOnlyTitle = (p) => {
+    const strong = p.querySelector("strong");
+    if (!strong) return false;
+    const allText = p.textContent.replace(/\s+/g, " ").trim();
+    const strongText = strong.textContent.replace(/\s+/g, " ").trim();
+    return allText === strongText;
+  };
+
+  const children = Array.from(document.body.children);
+
+  for (const el of children) {
+    if (el.tagName === "P" && isStrongOnlyTitle(el)) {
+      // We reached a new title: finalize the previous slide with whatever we've buffered
+      if (lastSlide) {
+        lastSlide.description = buffer.join("\n\n").trim();
+      }
+      // Start a new slide with this title
+      lastSlide = { title: el.textContent.trim(), description: "" };
+      slides.push(lastSlide);
+      buffer = [];
+      continue;
     }
+
+    // Accumulate text for "content before the next title"
+    const text = (el.textContent || "").replace(/\s+/g, " ").trim();
+    if (text) buffer.push(text);
   }
 
-  return slides;
+  // Attach any trailing content to the last slide so nothing is lost
+  if (lastSlide && buffer.length) {
+    lastSlide.description = buffer.join("\n\n").trim();
+  }
+
+  // Clean up any accidental empties
+  return slides.filter(s => s.title && typeof s.description === "string");
 }
+
 
 
 app.post("/upload-doc", async (req, res) => {
@@ -380,7 +411,7 @@ app.post("/create-slides", async (req, res) => {
               scaleX: 1,
               scaleY: 1,
               translateX: 540,
-              translateY: 390,
+              translateY: 370,
               unit: "PT"
             }
           }
@@ -406,7 +437,7 @@ app.post("/create-slides", async (req, res) => {
               scaleX: 1,
               scaleY: 1,
               translateX: 60,
-              translateY: 100,
+              translateY: 50,
               unit: "PT"
             }
           }
@@ -417,6 +448,16 @@ app.post("/create-slides", async (req, res) => {
           objectId: `title_${slideId}`,
           text: slide.title,
           insertionIndex: 0
+        }
+      });
+      slideRequests.push({
+        updateTextStyle: {
+          objectId: `title_${slideId}`,
+          style: {
+            fontSize: { magnitude: 18, unit: "PT" },
+            bold: true
+          },
+          fields: "fontSize,bold"
         }
       });
 
@@ -432,7 +473,7 @@ app.post("/create-slides", async (req, res) => {
               scaleX: 1,
               scaleY: 1,
               translateX: 60,
-              translateY: 180,
+              translateY: 70,
               unit: "PT"
             }
           }
@@ -443,6 +484,16 @@ app.post("/create-slides", async (req, res) => {
           objectId: `desc_${slideId}`,
           text: slide.description,
           insertionIndex: 0
+        }
+      });
+      slideRequests.push({
+        updateTextStyle: {
+          objectId: `desc_${slideId}`,
+          style: {
+            fontSize: { magnitude: 14, unit: "PT" },
+            bold: false
+          },
+          fields: "fontSize,bold"
         }
       });
     });
