@@ -102,6 +102,8 @@ app.post("/upload-doc", async (req, res) => {
     // Decode base64 HTML
     const html = Buffer.from(html_base64, "base64").toString("utf8");
 
+    const isArabic = /[\u0590-\u05FF\u0600-\u06FF]/.test(html);
+
     // Set up OAuth2 client
     const oauth2Client = new google.auth.OAuth2();
     oauth2Client.setCredentials({ access_token });
@@ -129,6 +131,36 @@ app.post("/upload-doc", async (req, res) => {
 
     // Clean up temp file
     fs.unlinkSync(tempPath);
+
+    // Apply RTL or LTR style at Google Docs level
+    const dcoument_ID = response.data.id;
+    const docs = google.docs({ version: "v1", auth: oauth2Client });
+
+    const doc = await docs.documents.get({ documentId: dcoument_ID });
+    const endIndex = doc.data.body.content[doc.data.body.content.length - 1].endIndex;
+
+    await docs.documents.batchUpdate({
+      documentId: dcoument_ID,
+      requestBody: {
+        requests: [
+          {
+            updateParagraphStyle: {
+              range: {
+                startIndex: 1, // skip the first index (0 is the start of doc)
+                endIndex: endIndex,  // until the end of doc
+              },
+              paragraphStyle: {
+                direction: isArabic ? "RIGHT_TO_LEFT" : "LEFT_TO_RIGHT",
+              },
+              fields: "direction",
+            },
+          },
+        ],
+      },
+    });
+
+
+    
 
     // Return Google Docs link
     const docId = response.data.id;
