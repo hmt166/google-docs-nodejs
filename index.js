@@ -5,6 +5,7 @@ const htmlToDocx = require("html-to-docx");
 const { JSDOM } = require("jsdom");
 const { textContent } = require("domutils");
 const { selectAll } = require("css-select");
+const { OpenAI } = require("openai");
 const fs = require("fs");
 
 const path = require("path");
@@ -772,6 +773,44 @@ app.post("/create-slides-show", async (req, res) => {
   } catch (err) {
     console.error("Slides API Error:", err.message);
     res.status(500).json({ error: err.message });
+  }
+});
+
+
+app.post("/open-ai-request", async (req, res) => {
+  try {
+    const { prompt, model, hashkey } = req.body;
+
+    if (!prompt || !model || !hashkey) {
+      return res.status(400).json({
+        success: false,
+        error: "Missing required fields: prompt, model, hashkey",
+      });
+    }
+
+    // Decode the base64-encoded key
+    const apiKey = Buffer.from(hashkey, "base64").toString("utf-8");
+    // Decode the base64-encoded prompt
+    const promptValue = Buffer.from(prompt, "base64").toString("utf-8");
+    
+    // Initialize OpenAI client with decoded key
+    const client = new OpenAI({ apiKey });
+
+    // Call OpenAI Responses API
+    const response = await client.responses.create({
+      model: model, // dynamic model
+      input: promptValue,
+    });
+
+    res.json({
+      success: true,
+      model,
+      prompt,
+      response: response.output_text,
+    });
+  } catch (error) {
+    console.error("Error:", error);
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
