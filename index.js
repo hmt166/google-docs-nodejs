@@ -91,6 +91,62 @@ function extractSlidesFromHtml_SlideShow(html) {
 }
 
 
+async function generateTextAndImage(prompt, model = "gpt-5", apiKeyBase64 = null) {
+  // Decode Base64 API key if provided
+  const apiKey = apiKeyBase64
+    ? Buffer.from(apiKeyBase64, "base64").toString("utf-8")
+    : process.env.OPENAI_API_KEY;
+
+  if (!apiKey) {
+    throw new Error("Missing OpenAI API key (env or apiKeyBase64 required)");
+  }
+
+  const client = new OpenAI({ apiKey });
+
+  // Single call with text + image tools
+  const response = await client.responses.create({
+    model,
+    input: [
+      {
+        role: "user",
+        content: [
+          {
+            type: "input_text",
+            text: prompt,
+          },
+        ],
+      },
+    ],
+    tools: [
+      {
+        type: "image_generation",
+        size: "1024x1024",
+        background: "transparent",
+      },
+    ],
+  });
+
+  // Extract text
+  const textOutput = response.output_text || "";
+
+  // Extract images (base64)
+  const images = response.output
+    ?.flatMap((item) => item.content || [])
+    .filter((c) => c.type === "output_image")
+    .map((c) => c.image?.b64_json) || [];
+
+  // Insert images into HTML
+  let finalHtml = textOutput;
+  images.forEach((imgB64, idx) => {
+    const imgTag = `<img src="data:image/png;base64,${imgB64}" 
+                     alt="Generated Image ${idx + 1}" 
+                     style="max-width:100%;height:auto;" />`;
+    finalHtml += imgTag;
+  });
+
+  return { html: finalHtml, imagesCount: images.length };
+}
+
 
 app.post("/upload-doc", async (req, res) => {
   try {
@@ -810,6 +866,34 @@ app.post("/open-ai-request", async (req, res) => {
     });
   } catch (error) {
     console.error("Error:", error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post("/generate-with-image", async (req, res) => {
+  try {
+    const { prompt, model, hashkey } = req.body;
+
+    if (!prompt || !model || !hashkey) {
+      return res.status(400).json({
+        success: false,
+        error: "Missing required fields: prompt, model, hashkey",
+      });
+    }
+    // Decode the base64-encoded prompt
+    const promptValue = Buffer.from(prompt, "base64").toString("utf-8");
+
+    const result = await generateTextAndImage(promptValue, model, hashkey);
+
+    res.json({
+      success: true,
+      model,
+      prompt,
+      response: result.html,
+    });
+
+  } catch (error) {
+    console.error("Error in /generate:", error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
