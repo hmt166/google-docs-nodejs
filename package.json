@@ -1,15 +1,16 @@
 {
   "name": "google-docs-nodejs",
   "version": "1.0.0",
-  "main": "index.js",
+  "main": "index.cjs",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.cjs"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "axios": "^1.13.2",
     "cors": "^2.8.5",
     "css-select": "^6.0.0",
     "domhandler": "^5.0.3",
